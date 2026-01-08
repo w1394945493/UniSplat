@@ -1,3 +1,7 @@
+# Copyright (c) OpenMMLab. All rights reserved.
+from setproctitle import setproctitle
+setproctitle("wys")
+
 import os
 os.environ["OPENCV_IO_ENABLE_OPENEXR"] = "1"
 import cv2
@@ -24,7 +28,7 @@ def parse_args():
     parser.add_argument("--work_dir_root", type=str, default="./work_dirs", help="Root directory for storing outputs")
     parser.add_argument("--load_from", type=str, default=None, help="ckpt load from")
     parser.add_argument("--data_path", type=str, default='data/waymo', help="data load from")
-    parser.add_argument('--launcher', choices=['none', 'pytorch'], default='none', 
+    parser.add_argument('--launcher', choices=['none', 'pytorch'], default='none',
                         help='job launcher: none for no distributed, pytorch for torchrun, accelerate for Accelerator')
     parser.add_argument('--local_rank', type=int, default=0,
                         help='local rank for distributed training')
@@ -65,7 +69,7 @@ def main():
     cfg = OmegaConf.load(args.config)
     work_dir = os.path.join(args.work_dir_root, 'demo')
     os.makedirs(work_dir, exist_ok=True)
-    
+
     # Setup distributed training
     args.distributed = False
     args.dist_url = 'env://'  # Default for PyTorch distributed
@@ -97,11 +101,11 @@ def main():
     model.load_state_dict(weight, strict=False)
     device = torch.device(f'cuda:{args.local_rank}' if torch.cuda.is_available() else 'cpu')
     model = model.to(device)
-    
+
     # Wrap model with DDP if using PyTorch distributed
     if args.distributed and args.launcher == 'pytorch':
         model = DDP(model, device_ids=[args.local_rank], output_device=args.local_rank)
-    
+
     # start evaluation
     logging.info(f"Dataset loaded, {len(dataset)} samples, {len(dataloader)} iterations")
     amp_dtype = torch.bfloat16 if torch.cuda.get_device_capability()[0] >= 8 else torch.float16
@@ -109,7 +113,7 @@ def main():
     with torch.no_grad():
         dataloader_iter = iter(dataloader)
         for batch_idx in range(0, len(dataloader)):
-            batch = next(dataloader_iter)            
+            batch = next(dataloader_iter)
             for key in batch.keys():
                 if key not in ['input_dict_gs', 'output_dict_gs']:
                     if isinstance(batch[key], torch.Tensor):
@@ -120,7 +124,7 @@ def main():
             with autocast(device_type='cuda', dtype=amp_dtype):
                 res = model(images)
 
-            with autocast(device_type='cuda', enabled=False):          
+            with autocast(device_type='cuda', enabled=False):
                 if hasattr(unwrapped_model, 'gaussian_head'):
                     input_dict_gs = batch['input_dict_gs']
                     input_dict_gs['sky_mask'] = batch['sky_mask'].to(images.dtype).to(device)
@@ -140,7 +144,7 @@ def main():
                     frame = batch['frame'][0]
                     save_path = os.path.join(f'{work_dir}/vis/', f'{scene}_{frame}')
                     os.makedirs(save_path, exist_ok=True)
-       
+
                     dyn = render_pkg_pixel['dyn']
                     for i in range(5, 10):
                         tmp = dyn[i][0].detach().clone().cpu().numpy()
@@ -158,7 +162,7 @@ def main():
                         save_img(tmp, os.path.join(save_path, f'recon_{i-5}.png'))
                         tmp = rgb_gt[i].detach().clone()
                         save_img(tmp, os.path.join(save_path, f'recon_{i-5}_gt.png'))
-                   
+
 if __name__ == "__main__":
     main()
-    
+

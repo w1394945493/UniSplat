@@ -16,7 +16,11 @@ from torch import nn
 import torch
 
 from torch.nn.functional import scaled_dot_product_attention
-from torch.nn.attention import SDPBackend
+# todo torch 2.0 版本
+# from torch.nn.attention import SDPBackend
+# todo torch 2.1 版本：
+# 针对 2.1 版本最健壮的导入方式
+from torch.backends.cuda import SDPBackend
 
 XFORMERS_ENABLED = os.environ.get("XFORMERS_DISABLED") is None
 try:
@@ -56,7 +60,7 @@ class Attention(nn.Module):
     def forward(self, x: Tensor, attn_bias=None) -> Tensor:
         B, N, C = x.shape
         qkv = self.qkv(x).reshape(B, N, 3, self.num_heads, C // self.num_heads).permute(2, 0, 3, 1, 4)
-        
+
         q, k, v = qkv[0] * self.scale, qkv[1], qkv[2]
         attn = q @ k.transpose(-2, -1)
 
@@ -90,7 +94,7 @@ class MemEffAttention(Attention):
         return x
 
 
-    
+
 class FlashAttention(Attention):
     def forward(self, x: Tensor, attn_bias=None) -> Tensor:
         B, N, C = x.shape
@@ -99,13 +103,13 @@ class FlashAttention(Attention):
         # q, k, v = unbind(qkv, 2)
         q, k, v = [qkv[:,:,i] for i in range(3)]
 
-        if q.dtype == torch.bfloat16:
-            with nn.attention.sdpa_kernel(SDPBackend.FLASH_ATTENTION):
-                x = scaled_dot_product_attention(q, k, v)
-        else:
-            with nn.attention.sdpa_kernel([SDPBackend.MATH, SDPBackend.EFFICIENT_ATTENTION]):
-                x = scaled_dot_product_attention(q, k, v)
-
+        # if q.dtype == torch.bfloat16:
+        #     with nn.attention.sdpa_kernel(SDPBackend.FLASH_ATTENTION):
+        #         x = scaled_dot_product_attention(q, k, v)
+        # else:
+        #     with nn.attention.sdpa_kernel([SDPBackend.MATH, SDPBackend.EFFICIENT_ATTENTION]):
+        #         x = scaled_dot_product_attention(q, k, v)
+        x = scaled_dot_product_attention(q, k, v)
         x = x.transpose(1, 2).reshape([B, N, C])
 
         x = self.proj(x)
@@ -272,7 +276,7 @@ class AttentionRope(nn.Module):
         if self.rope is not None:
             q = self.rope(q, xpos)
             k = self.rope(k, xpos)
-        
+
         q = q * self.scale
         attn = q @ k.transpose(-2, -1)
 
@@ -294,7 +298,7 @@ class MemEffAttentionRope(AttentionRope):
 
         B, N, C = x.shape
         qkv = self.qkv(x).reshape(B, N, 3, self.num_heads, C // self.num_heads)
-        
+
         qkv = qkv.transpose(1, 3)
         # q, k, v = unbind(qkv, 2)
         q, k, v = [qkv[:,:,i] for i in range(3)]
@@ -319,7 +323,7 @@ class MemEffAttentionRope(AttentionRope):
         x = self.proj_drop(x)
         return x
 
-    
+
 class FlashAttentionRope(AttentionRope):
     def forward(self, x: Tensor, attn_bias=None, xpos=None) -> Tensor:
         B, N, C = x.shape
@@ -333,12 +337,13 @@ class FlashAttentionRope(AttentionRope):
             q = self.rope(q, xpos)
             k = self.rope(k, xpos)
 
-        if q.dtype == torch.bfloat16:
-            with nn.attention.sdpa_kernel(SDPBackend.FLASH_ATTENTION):
-                x = scaled_dot_product_attention(q, k, v)
-        else:
-            with nn.attention.sdpa_kernel([SDPBackend.MATH, SDPBackend.EFFICIENT_ATTENTION]):
-                x = scaled_dot_product_attention(q, k, v)
+        # if q.dtype == torch.bfloat16:
+        #     with nn.attention.sdpa_kernel(SDPBackend.FLASH_ATTENTION):
+        #         x = scaled_dot_product_attention(q, k, v)
+        # else:
+        #     with nn.attention.sdpa_kernel([SDPBackend.MATH, SDPBackend.EFFICIENT_ATTENTION]):
+        #         x = scaled_dot_product_attention(q, k, v)
+        x = scaled_dot_product_attention(q, k, v)
 
         x = x.transpose(1, 2).reshape([B, N, C])
 
@@ -348,10 +353,10 @@ class FlashAttentionRope(AttentionRope):
 
 def get_attn_score(blk_class, x, frame_num, token_length, xpos=None):
     x = blk_class.norm1(x)
-    
+
     B, N, C = x.shape
     qkv = blk_class.attn.qkv(x).reshape(B, N, 3, blk_class.attn.num_heads, C // blk_class.attn.num_heads)
-    
+
     qkv = qkv.transpose(1, 3)
     # q, k, v = unbind(qkv, 2)
     q, k, v = [qkv[:,:,i] for i in range(3)]
